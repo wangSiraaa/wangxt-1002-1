@@ -43,6 +43,8 @@ export interface QueueNumber {
   brokerName: string;
   company: string;
   createdAt: Date;
+  enqueueTime: Date;
+  queueSequence: number;
   calledAt?: Date;
   completedAt?: Date;
   status: QueueStatus;
@@ -59,6 +61,7 @@ export interface QueueNumber {
   reviewedBy?: string;
   reviewedAt?: Date;
   passCount: number;
+  lastPassedAt?: Date;
   documentsComplete: boolean;
   missingDocuments?: string[];
   cargoDescription: string;

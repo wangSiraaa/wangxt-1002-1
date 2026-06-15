@@ -29,6 +29,7 @@ export default function WindowPage() {
     getWaitingQueue,
     getNextNumber,
     callNextNumber,
+    startProcessing,
     completeNumber,
     pauseWindow,
     resumeWindow,
@@ -76,7 +77,7 @@ export default function WindowPage() {
   };
 
   const statusInfo = window ? WINDOW_STATUSES.find(s => s.value === window.status) : null;
-  const canCall = window?.status === 'open' && !!nextNumber && !currentNumber;
+  const canCall = window?.status === 'open' && !!nextNumber;
   const canPause = window?.status === 'open';
   const canResume = window?.status === 'paused' || window?.status === 'lunch';
 
@@ -221,12 +222,9 @@ export default function WindowPage() {
               </button>
               <button
                 onClick={() => {
-                  const updated = numbers.map(n =>
-                    n.id === currentNumber.id
-                      ? { ...n, status: 'processing' as const }
-                      : n
-                  );
-                  useQueueStore.setState({ numbers: updated });
+                  if (currentNumber) {
+                    startProcessing(currentNumber.id);
+                  }
                 }}
                 className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
               >
@@ -256,6 +254,51 @@ export default function WindowPage() {
                 叫号：{nextNumber.number}
               </button>
             )}
+          </div>
+        )}
+
+        {currentNumber && currentNumber.status === 'calling' && (
+          <div className="mb-6 p-6 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-amber-600 mb-1">等待报到</div>
+                <div className="text-5xl font-bold text-amber-700">{currentNumber.number}</div>
+              </div>
+              <div className="text-right">
+                <div className="flex items-center gap-2 mb-2">
+                  <User className="w-4 h-4 text-gray-500" />
+                  <span className="font-medium text-gray-900">{currentNumber.brokerName}</span>
+                </div>
+                <div className="text-sm text-gray-500">{currentNumber.company}</div>
+                <div className="flex items-center gap-2 mt-2">
+                  {currentNumber.priority > 0 && (
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${PRIORITY_LABELS[currentNumber.priority].color}`}>
+                      {PRIORITY_LABELS[currentNumber.priority].label}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 pt-4 border-t border-amber-200 flex gap-3">
+              <button
+                onClick={() => {
+                  if (currentNumber) {
+                    startProcessing(currentNumber.id);
+                  }
+                }}
+                className="flex-1 py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                <CheckCircle className="w-5 h-5" />
+                报到，开始办理
+              </button>
+              <button
+                onClick={() => setShowPassModal(true)}
+                className="flex-1 py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                <SkipForward className="w-5 h-5" />
+                过号（回队尾）
+              </button>
+            </div>
           </div>
         )}
 

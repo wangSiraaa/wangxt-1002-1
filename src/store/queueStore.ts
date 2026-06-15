@@ -42,6 +42,8 @@ const initialNumbers: QueueNumber[] = [
     brokerName: '张三',
     company: '诚信报关行',
     createdAt: new Date(now.getTime() - 30 * 60000),
+    enqueueTime: new Date(now.getTime() - 30 * 60000),
+    queueSequence: 1,
     status: 'completed',
     windowId: 'w1',
     calledAt: new Date(now.getTime() - 25 * 60000),
@@ -62,6 +64,8 @@ const initialNumbers: QueueNumber[] = [
     brokerName: '李四',
     company: '快捷报关有限公司',
     createdAt: new Date(now.getTime() - 20 * 60000),
+    enqueueTime: new Date(now.getTime() - 20 * 60000),
+    queueSequence: 2,
     status: 'processing',
     windowId: 'w1',
     calledAt: new Date(now.getTime() - 10 * 60000),
@@ -86,6 +90,8 @@ const initialNumbers: QueueNumber[] = [
     brokerName: '赵六',
     company: '安达报关行',
     createdAt: new Date(now.getTime() - 15 * 60000),
+    enqueueTime: new Date(now.getTime() - 15 * 60000),
+    queueSequence: 3,
     status: 'calling',
     windowId: 'w2',
     calledAt: new Date(now.getTime() - 2 * 60000),
@@ -108,6 +114,8 @@ const initialNumbers: QueueNumber[] = [
     brokerName: '张三',
     company: '诚信报关行',
     createdAt: new Date(now.getTime() - 10 * 60000),
+    enqueueTime: new Date(now.getTime() - 10 * 60000),
+    queueSequence: 4,
     status: 'waiting',
     priority: 0,
     priorityApproved: false,
@@ -125,6 +133,8 @@ const initialNumbers: QueueNumber[] = [
     brokerName: '李四',
     company: '快捷报关有限公司',
     createdAt: new Date(now.getTime() - 8 * 60000),
+    enqueueTime: new Date(now.getTime() - 8 * 60000),
+    queueSequence: 5,
     status: 'reviewing',
     priority: 1,
     priorityApproved: true,
@@ -144,11 +154,14 @@ const initialNumbers: QueueNumber[] = [
     brokerName: '赵六',
     company: '安达报关行',
     createdAt: new Date(now.getTime() - 5 * 60000),
+    enqueueTime: new Date(now.getTime() - 5 * 60000),
+    queueSequence: 6,
     status: 'waiting',
     priority: 0,
     priorityApproved: false,
     isSpecialCargo: false,
     passCount: 1,
+    lastPassedAt: new Date(now.getTime() - 4 * 60000),
     documentsComplete: false,
     missingDocuments: ['商业发票', '装箱单'],
     cargoDescription: '日用百货',
@@ -162,6 +175,8 @@ const initialNumbers: QueueNumber[] = [
     brokerName: '张三',
     company: '诚信报关行',
     createdAt: new Date(now.getTime() - 3 * 60000),
+    enqueueTime: new Date(now.getTime() - 3 * 60000),
+    queueSequence: 7,
     status: 'waiting',
     priority: 0,
     priorityApproved: false,
@@ -273,10 +288,12 @@ interface QueueState {
   currentUserName: string;
   currentRole: 'broker' | 'window' | 'supervisor' | 'dispatcher';
   numberCounter: Record<BusinessType, number>;
+  nextQueueSequence: number;
   getCurrentQueue: (businessType?: BusinessType) => QueueNumber[];
   getWaitingQueue: (windowId: string) => QueueNumber[];
   getNextNumber: (windowId: string) => QueueNumber | null;
   callNextNumber: (windowId: string) => QueueNumber | null;
+  startProcessing: (numberId: string) => void;
   completeNumber: (numberId: string) => void;
   pauseWindow: (windowId: string, reason: string, status?: WindowStatus) => void;
   resumeWindow: (windowId: string) => void;
@@ -298,6 +315,17 @@ interface QueueState {
   checkCongestion: () => void;
 }
 
+const queueSort = (a: QueueNumber, b: QueueNumber) => {
+  if (b.priority !== a.priority) return b.priority - a.priority;
+  const aPassed = !!a.lastPassedAt;
+  const bPassed = !!b.lastPassedAt;
+  if (aPassed !== bPassed) return aPassed ? 1 : -1;
+  if (aPassed && bPassed) {
+    return (a.lastPassedAt?.getTime() || 0) - (b.lastPassedAt?.getTime() || 0);
+  }
+  return a.queueSequence - b.queueSequence;
+};
+
 export const useQueueStore = create<QueueState>((set, get) => ({
   numbers: initialNumbers,
   windows: initialWindows,
@@ -311,6 +339,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   currentUserName: '主管-陈',
   currentRole: 'supervisor',
   numberCounter: { general: 4, special: 2, dangerous: 1, perishable: 2 },
+  nextQueueSequence: 8,
 
   getCurrentQueue: (businessType) => {
     const { numbers } = get();
@@ -318,10 +347,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     if (businessType) {
       filtered = filtered.filter(n => n.businessType === businessType);
     }
-    return filtered.sort((a, b) => {
-      if (b.priority !== a.priority) return b.priority - a.priority;
-      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-    });
+    return filtered.sort(queueSort);
   },
 
   getWaitingQueue: (windowId) => {
@@ -330,10 +356,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     if (!window) return [];
     return numbers
       .filter(n => n.status === 'waiting' && window.skills.includes(n.businessType))
-      .sort((a, b) => {
-        if (b.priority !== a.priority) return b.priority - a.priority;
-        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-      });
+      .sort(queueSort);
   },
 
   getNextNumber: (windowId) => {
@@ -351,9 +374,6 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       if (n.id === nextNumber.id) {
         return { ...n, status: 'calling' as QueueStatus, windowId, calledAt: new Date() };
       }
-      if (n.status === 'calling' && n.windowId === windowId) {
-        return { ...n, status: 'passed' as QueueStatus, passCount: n.passCount + 1 };
-      }
       return n;
     });
     const updatedWindows = windows.map(w =>
@@ -361,6 +381,14 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     );
     set({ numbers: updatedNumbers, windows: updatedWindows });
     return { ...nextNumber, status: 'calling', windowId, calledAt: new Date() } as QueueNumber;
+  },
+
+  startProcessing: (numberId) => {
+    const { numbers } = get();
+    const updatedNumbers = numbers.map(n =>
+      n.id === numberId ? { ...n, status: 'processing' as QueueStatus } : n
+    );
+    set({ numbers: updatedNumbers });
   },
 
   completeNumber: (numberId) => {
@@ -414,20 +442,33 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   },
 
   passNumber: (numberId, windowId, reason) => {
-    const { numbers, windows, passRecords, getWaitingQueue } = get();
+    const { numbers, windows, passRecords, nextQueueSequence } = get();
     const number = numbers.find(n => n.id === numberId);
     const window = windows.find(w => w.id === windowId);
     if (!number || !window) return;
-    const waitingQueue = getWaitingQueue(windowId);
-    const newPosition = waitingQueue.length > 0 ? waitingQueue.length : 1;
+    const newSeq = nextQueueSequence;
     const updatedNumbers = numbers.map(n =>
       n.id === numberId
-        ? { ...n, status: 'waiting' as QueueStatus, passCount: n.passCount + 1, windowId: undefined, calledAt: undefined }
+        ? {
+            ...n,
+            status: 'waiting' as QueueStatus,
+            passCount: n.passCount + 1,
+            lastPassedAt: new Date(),
+            windowId: undefined,
+            calledAt: undefined,
+            enqueueTime: new Date(),
+            queueSequence: newSeq,
+          }
         : n
     );
     const updatedWindows = windows.map(w =>
       w.id === windowId ? { ...w, currentNumberId: undefined } : w
     );
+    const windowSkills = window.skills;
+    const sameSkillWaiting = updatedNumbers.filter(
+      n => n.status === 'waiting' && n.id !== numberId && windowSkills.includes(n.businessType)
+    );
+    const newPosition = sameSkillWaiting.length + 1;
     const newPass: PassRecord = {
       id: generateId(),
       numberId,
@@ -442,13 +483,15 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       numbers: updatedNumbers,
       windows: updatedWindows,
       passRecords: [...passRecords, newPass],
+      nextQueueSequence: newSeq + 1,
     });
   },
 
   submitReview: (numberId, result, comment, reviewerName) => {
-    const { numbers, reviewRecords } = get();
+    const { numbers, reviewRecords, nextQueueSequence } = get();
     const number = numbers.find(n => n.id === numberId);
     if (!number || !number.riskLevel) return;
+    const newSeq = nextQueueSequence;
     const updatedNumbers = numbers.map(n =>
       n.id === numberId
         ? {
@@ -458,6 +501,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
             reviewedBy: reviewerName,
             reviewedAt: new Date(),
             status: result === 'approved' ? ('waiting' as QueueStatus) : ('cancelled' as QueueStatus),
+            ...(result === 'approved' ? { enqueueTime: new Date(), queueSequence: newSeq } : {}),
           }
         : n
     );
@@ -477,6 +521,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     set({
       numbers: updatedNumbers,
       reviewRecords: [...reviewRecords, newReview],
+      ...(result === 'approved' ? { nextQueueSequence: newSeq + 1 } : {}),
     });
   },
 
@@ -540,9 +585,10 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   },
 
   supervisorJumpQueue: (numberId, reason) => {
-    const { numbers, priorityChanges, currentUserName, currentUserId } = get();
+    const { numbers, priorityChanges, currentUserName, currentUserId, nextQueueSequence } = get();
     const number = numbers.find(n => n.id === numberId);
     if (!number) return;
+    const newSeq = nextQueueSequence;
     const updatedNumbers = numbers.map(n =>
       n.id === numberId
         ? {
@@ -552,6 +598,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
             priorityApprovedBy: currentUserName,
             priorityApprovedAt: new Date(),
             priorityExpiry: new Date(Date.now() + 2 * 60 * 60 * 1000),
+            queueSequence: newSeq,
           }
       : n
     );
@@ -570,11 +617,12 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     set({
       numbers: updatedNumbers,
       priorityChanges: [...priorityChanges, newChange],
+      nextQueueSequence: newSeq + 1,
     });
   },
 
   createQueueNumber: (brokerId, businessType, cargoDescription, cargoWeight, documents, isSpecialCargo, riskLevel) => {
-    const { brokers, numbers, numberCounter, alerts, currentUserName } = get();
+    const { brokers, numbers, numberCounter, alerts, nextQueueSequence } = get();
     const broker = brokers.find(b => b.id === brokerId);
     if (!broker) return null;
     if (broker.isBlacklisted) {
@@ -592,6 +640,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     }
     const prefix = businessType === 'general' ? 'A' : businessType === 'special' ? 'B' : businessType === 'dangerous' ? 'C' : 'D';
     const count = numberCounter[businessType] + 1;
+    const newSeq = nextQueueSequence;
     const newNumber: QueueNumber = {
       id: generateId(),
       number: `${prefix}${String(count).padStart(3, '0')}`,
@@ -600,6 +649,8 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       brokerName: broker.name,
       company: broker.company,
       createdAt: new Date(),
+      enqueueTime: new Date(),
+      queueSequence: newSeq,
       status: isSpecialCargo && riskLevel && ['medium', 'high'].includes(riskLevel) ? 'reviewing' : 'waiting',
       priority: 0,
       priorityApproved: false,
@@ -639,6 +690,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     set({
       numbers: [...numbers, newNumber],
       numberCounter: { ...numberCounter, [businessType]: count },
+      nextQueueSequence: newSeq + 1,
     });
     get().checkCongestion();
     return newNumber;
